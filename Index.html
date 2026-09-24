@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>نظام حجز المركبات</title>
+
+  <!-- أيقونة النظام المخصَّصة (سيارة + شارة "تم الحجز" — تصميم مخصص مُضمَّن في الكود، انظر
+       Icons.gs) بمقاسات متعددة لكل من شريط عنوان المتصفح وأجهزة آيفون/آيباد — مُضمَّنة مباشرة
+       كـ Data URI (بدل رابط ?icon=N المار عبر doGet) لإصلاح عطل "لا تظهر الأيقونة عند تثبيت
+       الموقع كتطبيق" — انظر شرح كامل في Icons.gs/getAppIconBase64 -->
+  <link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,<?!= getAppIconBase64('32') ?>">
+  <link rel="icon" type="image/png" sizes="192x192" href="data:image/png;base64,<?!= getAppIconBase64('192') ?>">
+  <link rel="apple-touch-icon" href="data:image/png;base64,<?!= getAppIconBase64('180') ?>">
+
+  <!-- ملف الظهور (Web App Manifest) + وسوم دعم "إضافة إلى الشاشة الرئيسية" على الهاتف بحيث
+       يفتح الموقع كتطبيق مستقل بأيقونته الخاصة (طلب المستخدم) — الآن مُضمَّن بالكامل (بما فيه
+       أيقوناته) كـ Data URI جاهز بذاته بلا أي طلب شبكة منفصل، وهو ما يُصلح أيضاً بطء فتح
+       التطبيق المثبَّت على الهاتف (طلب المستخدم) — انظر شرح كامل في Icons.gs/getWebAppManifestDataUri -->
+  <link rel="manifest" href="<?!= getWebAppManifestDataUri() ?>">
+  <meta name="theme-color" content="#1e5aa8">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="حجز المركبات">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <!-- مكتبة تقويم حديثة تدعم العربية والاتجاه من اليمين لليسار بالكامل (طلب المستخدم — المرحلة 7)
+       تحل محل شبكة التقويم المبنية يدوياً سابقاً — انظر Calendar.gs / js_bookings.html -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js"></script>
+  <?!= include('css'); ?>
+  <?!= getBackgroundImageCSS(); ?>
+  <?!= getScreenOpacityCSS(); ?>
+  <script>
+    // تطبيق الوضع (نهاري/ليلي) فوراً قبل رسم الصفحة لمنع الوميض. الوضع الآن يُحدَّد حصراً من
+    // إعدادات النظام ← المظهر (اختيار المسؤول فقط) — طلب المستخدم: إزالة أي اختيار شخصي/تبديل
+    // من واجهة المستخدم نهائياً (لا يوجد بعد الآن زر تبديل، ولا أي أثر لاختيار محفوظ سابقاً في
+    // localStorage على هذا الجهاز)، بحيث يُطبَّق نفس الوضع المحدَّد من الإعدادات دائماً وعلى كل
+    // الأجهزة بما فيها فتح الموقع من الهاتف، بلا أي استثناء أو تجاوز من جهة المستخدم
+    (function() {
+      try {
+        document.documentElement.setAttribute('data-theme', '<?!= (getSettings().DefaultTheme === "dark") ? "dark" : "light" ?>');
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div id="app">
+
+    <div id="maintenanceScreen" class="screen">
+      <div class="maintenance-screen">
+        <div class="maintenance-card">
+          <div class="maintenance-icon">🚧</div>
+          <h1 id="maintTitle">النظام متوقف حالياً للصيانة</h1>
+          <p id="maintMessage"></p>
+          <p id="maintUntil" style="font-weight:700"></p>
+          <button class="maintenance-admin-link" onclick="showAdminLoginFromMaintenance()">دخول المسؤول</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- تظهر شاشة تسجيل الدخول افتراضياً (active) في الـ HTML نفسه المُرسَل من الخادم مباشرة —
+         وليس بانتظار أي جولة اتصال JavaScript لاحقة (checkSystemStatus) — هذا هو الإصلاح
+         الجذري لعطل "يظهر التذييل فقط لمدة تصل لـ20 ثانية قبل ظهور شاشة الدخول": كانت كل
+         الشاشات (.screen) مخفية افتراضياً حتى تكتمل تلك الجولة، فتبدو الصفحة معطوبة أو فارغة
+         خلال تلك الفترة. الآن تظهر شاشة الدخول فوراً مع أول رسم للصفحة، ثم checkSystemAndInit
+         يبدّلها لشاشة الصيانة لاحقاً فقط إن تبيَّن أن وضع الصيانة مفعَّل فعلاً (نادر)، أو
+         attemptInstantResume في js_core.html يبدّلها فوراً للشاشة الرئيسية إن وُجدت جلسة
+         محفوظة صالحة (انظر شرح attemptInstantResume) -->
+    <div id="loginScreen" class="screen active">
+      <div class="login-container">
+        <div class="login-card">
+          <!-- شعار الوزارة يُرسَم هنا مباشرة فوق عنوان "نظام حجز المركبات" (طلب المستخدم)
+               عبر getLoginLogoHTML() المُستدعاة مباشرة ضمن تقييم قالب Index.html نفسه — وليس
+               عبر include('Login') ثم استبدال نص لاحقاً (كانت الطريقة السابقة، واستُبدلت بهذه
+               الطريقة الأضمن لأن include() تستخدم getContent() التي لا تُقيّم أو تضمن الحفاظ
+               الدقيق على تعليقات HTML النائبة داخل ملف مُضمَّن، بخلاف Index.html نفسه الذي
+               يُقيَّم مباشرة عبر createTemplateFromFile('Index').evaluate()) — انظر شرح كامل
+               في Config.gs/getLoginLogoHTML -->
+          <div class="login-logo" id="loginLogo"><?!= getLoginLogoHTML(); ?></div>
+          <?!= include('Login'); ?>
+        </div>
+      </div>
+    </div>
+
+    <div id="forceChangePasswordScreen" class="screen">
+      <div class="login-container">
+        <div class="login-card">
+          <div class="login-logo">🔒</div>
+          <h1 class="login-title">تعيين كلمة مرور جديدة</h1>
+          <p class="login-subtitle">يجب اختيار كلمة مرور قوية وخاصة بك قبل المتابعة إلى النظام</p>
+
+          <form onsubmit="event.preventDefault(); submitForceNewPassword();">
+            <div class="form-group">
+              <label class="form-label">كلمة المرور الجديدة</label>
+              <input type="password" id="fcp_newPassword" class="form-input" required autocomplete="new-password" oninput="updatePasswordStrengthMeter(this.value)">
+              <div class="strength-meter-track" style="margin-top:8px"><div id="fcp_strengthBar" class="strength-meter-bar"></div></div>
+              <small id="fcp_strengthLabel" style="color:var(--text-light)">8 أحرف على الأقل، تحتوي حرفاً ورقماً ورمزاً</small>
+            </div>
+            <div class="form-group">
+              <label class="form-label">تأكيد كلمة المرور</label>
+              <input type="password" id="fcp_confirmPassword" class="form-input" required autocomplete="new-password" oninput="checkPasswordMatch()">
+              <small id="fcp_matchLabel"></small>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">✅ تعيين كلمة المرور والمتابعة</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="mainScreen" class="screen">
+      <div class="layout">
+        <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+        <aside id="sidebar" class="sidebar">
+          <div class="sidebar-header">
+            <?!= getSidebarLogoHTML(); ?>
+            <div class="logo">🚗</div>
+            <h2>نظام حجز المركبات</h2>
+            <small id="orgNameLabel"></small>
+          </div>
+          <nav id="navMenu"></nav>
+          <div class="sidebar-footer">
+            <div id="userInfo"></div>
+            <button onclick="logout()" class="btn-logout">🚪 خروج</button>
+          </div>
+        </aside>
+        <main class="main-content">
+          <header class="topbar">
+            <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+            <div class="search-global">
+              <input type="text" id="globalSearch" placeholder="🔍 بحث شامل (رقم سيارة، اسم موظف...)" oninput="globalSearchHandler(this.value)">
+              <!-- البحث عن سيارة بمسح رمز QR بالكاميرا (طلب المستخدم) — انظر openQRScanner في js_qr.html، ويظهر فقط لمن يملك صلاحية "مسح رمز QR بالكاميرا" -->
+              <button type="button" class="qr-scan-inline-btn" onclick="openQRScanner()" title="البحث بمسح رمز QR للسيارة">📷</button>
+              <div id="searchResults" class="search-results"></div>
+            </div>
+            <div class="topbar-actions">
+              <!-- نفس زر مسح QR على الهاتف (حيث يُخفى مربع البحث النصي لضيق الشاشة) -->
+              <button type="button" class="qr-scan-mobile-btn" id="qrScanMobileBtn" onclick="openQRScanner()" title="البحث بمسح رمز QR للسيارة">📷</button>
+              <div class="notif-bell" onclick="toggleNotifications()">
+                🔔 <span id="notifCount" class="badge">0</span>
+                <div id="notifDropdown" class="notif-dropdown"></div>
+              </div>
+              <div class="user-chip" id="userChip"></div>
+            </div>
+          </header>
+          <div id="pageContent" class="page-content"></div>
+        </main>
+      </div>
+    </div>
+
+    <!-- التذييل جزء من #app نفسه (نمط "sticky footer" القياسي عبر flex) حتى يظهر دائماً
+         مباشرة أسفل محتوى الشاشة النشطة بلا حاجة لتمرير كامل الشاشة أولاً، وليعمل بشكل
+         صحيح على جميع أحجام شاشات الهاتف -->
+    <footer class="site-footer">
+      <div>© جميع الحقوق محفوظة إدارة التعليم بالمصنعة</div>
+      <div>تم تصميم الموقع بواسطة رئيس قسم تكنولوجيا المعلومات والاتصالات - جميل محمد المالكي
+        <span class="footer-call-btn" onclick="callDesigner()" title="اتصال هاتفي">📞</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="modal" class="modal"></div>
+
+  <!-- رصد أي خطأ يمنع تحميل أحد ملفات الواجهة (انظر فحص التحميل أسفل الملفات) — يُسجَّل قبل
+       تحميلها حتى يُلتقط حتى خطأ الصياغة (SyntaxError) الذي يُعطّل ملفاً كاملاً بصمت -->
+  <script>
+    window.__loadErrors = [];
+    window.addEventListener('error', function (e) {
+      if (e && e.message) window.__loadErrors.push(e.message + (e.lineno ? ' (سطر ' + e.lineno + ')' : ''));
+    });
+  </script>
+  <?!= include('js_core'); ?>
+  <?!= include('js_bookings'); ?>
+  <?!= include('js_vehicles'); ?>
+  <?!= include('js_qr'); ?>
+  <?!= include('js_admin'); ?>
+  <!-- فحص تحميل ملفات الواجهة: إن تعذّر تحميل أي ملف (مثل خطأ في النسخ أو ملف ناقص في المشروع)
+       يظهر شريط تنبيه واضح باسم الملف بدل تعطّل أزرار شاشة كاملة بصمت دون أي تفسير -->
+  <script>
+    (function () {
+      var modules = { js_core: 'loadPage', js_bookings: 'openTripForm', js_vehicles: 'openVehicleForm', js_qr: 'openQRScanner', js_admin: 'openReportModal' };
+      var missing = [];
+      for (var m in modules) { if (typeof window[modules[m]] !== 'function') missing.push(m); }
+      if (!missing.length) return;
+      var show = function () {
+        var bar = document.createElement('div');
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#b91c1c;color:#fff;padding:10px 14px;font-size:13px;line-height:1.8;text-align:center;font-family:Tahoma,Arial';
+        bar.textContent = '⚠️ تعذّر تحميل جزء من النظام: ' + missing.join('، ') + ' — تأكد من وجود هذه الملفات في مشروع Apps Script ونسخها كاملة ثم انشر إصداراً جديداً.' +
+          (window.__loadErrors.length ? ' التفاصيل: ' + window.__loadErrors.slice(0, 3).join(' | ') : '');
+        bar.onclick = function () { bar.remove(); };
+        document.body.appendChild(bar);
+      };
+      if (document.body) show(); else window.addEventListener('DOMContentLoaded', show);
+    })();
+  </script>
+</body>
+</html>
