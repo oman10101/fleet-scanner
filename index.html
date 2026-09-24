@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#0b1220"/>
+<title>ماسح رموز QR — نظام حجز المركبات</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #0b1220; color: #fff; font-family: -apple-system, 'Segoe UI', Tahoma, Arial, sans-serif; min-height: 100%; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; gap: 10px; }
+  .top h1 { font-size: 16px; font-weight: 700; }
+  .btn { border: none; border-radius: 10px; padding: 10px 16px; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .btn-light { background: #e5e7eb; color: #111827; }
+  .btn-primary { background: #1e5aa8; color: #fff; }
+  .stage { position: relative; width: 100%; max-width: 640px; margin: 0 auto; aspect-ratio: 3 / 4; background: #000; overflow: hidden; }
+  @media (min-width: 700px) { .stage { aspect-ratio: 4 / 3; border-radius: 14px; } }
+  .stage video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .frame { position: absolute; inset: 18% 14%; border: 3px solid rgba(255,255,255,.95); border-radius: 18px; box-shadow: 0 0 0 999px rgba(0,0,0,.38); pointer-events: none; }
+  .frame .line { position: absolute; left: 6%; right: 6%; height: 2px; background: #22c55e; box-shadow: 0 0 12px #22c55e; top: 50%; animation: scan 1.8s ease-in-out infinite; }
+  @keyframes scan { 0%, 100% { top: 10%; } 50% { top: 90%; } }
+  .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; text-align: center; padding: 24px; background: rgba(11,18,32,.92); font-size: 15px; line-height: 1.8; }
+  .hidden { display: none !important; }
+  .status { text-align: center; padding: 12px 16px 4px; font-size: 14px; line-height: 1.8; color: #d1d5db; }
+  .status.err { color: #fca5a5; font-weight: 600; }
+  .diag { text-align: center; font-size: 11px; color: #6b7280; direction: ltr; padding-bottom: 6px; }
+  .manual { max-width: 640px; margin: 8px auto 0; padding: 0 14px; display: flex; gap: 8px; }
+  .manual input { flex: 1; min-width: 0; border-radius: 10px; border: 1px solid #374151; background: #111827; color: #fff; padding: 10px 12px; font-size: 16px; font-family: inherit; }
+  .result { max-width: 640px; margin: 10px auto; padding: 16px; background: #fff; color: #111827; border-radius: 16px; }
+  .result .plate { font-size: 26px; font-weight: 800; color: #1e5aa8; unicode-bidi: plaintext; }
+  .result .sub { color: #6b7280; margin: 2px 0 10px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile { background: #f3f5f9; border: 1px solid #e5e7eb; border-radius: 10px; padding: 9px 11px; }
+  .tile small { display: block; color: #6b7280; font-size: 12px; margin-bottom: 3px; }
+  .tile b { font-size: 15px; }
+  .tile.wide { grid-column: 1 / -1; }
+  .tip { max-width: 640px; margin: 10px auto 14px; padding: 0 16px; font-size: 12.5px; line-height: 1.8; color: #9ca3af; text-align: center; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>📷 مسح رمز QR للسيارة</h1>
+    <button class="btn btn-light" id="closeBtn" type="button">إغلاق</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <video id="video" playsinline="playsinline" webkit-playsinline="webkit-playsinline" muted="muted" autoplay="autoplay"></video>
+    <div class="frame" id="frame"><div class="line"></div></div>
+    <div class="overlay" id="overlay"><div>⏳ جاري تشغيل الكاميرا...</div><small>إن ظهر طلب إذن الكاميرا يرجى الضغط على "سماح"</small></div>
+  </div>
+
+  <div class="status" id="status">وجّه الكاميرا نحو رمز QR الملصق على السيارة (على بُعد 10–25 سم)</div>
+  <div class="diag" id="diag"></div>
+
+  <div class="manual" id="manualBox">
+    <input type="text" id="manualInput" placeholder="أو أدخل رقم اللوحة يدوياً"/>
+    <button class="btn btn-primary" id="manualBtn" type="button">بحث</button>
+  </div>
+  <div class="actions" id="photoBox">
+    <button class="btn btn-light" id="photoBtn" type="button">📸 تصوير الرمز</button>
+  </div>
+  <div class="tip" id="tip">💡 على الآيفون يمكنك أيضاً فتح تطبيق <b>الكاميرا</b> مباشرة وتوجيهه نحو ملصق السيارة — يفتح النظام على بيانات السيارة فوراً (للملصقات المطبوعة من الإصدار 2.15 فأحدث)</div>
+
+  <div class="result hidden" id="result"></div>
+
+<script>
+//<![CDATA[
+/* ======================================================================
+   صفحة الماسح المباشر لرموز QR — نظام حجز المركبات
+   ----------------------------------------------------------------------
+   لماذا صفحة مستقلة؟ منذ فبراير 2026 تمنع Google تشغيل الكاميرا داخل صفحات تطبيقات الويب
+   المبنية بـ Apps Script (الإطار الداخلي لا يملك صلاحية الكاميرا: "camera is not allowed in
+   this document")، وعلى آيفون لا تنجح حتى النافذة الفارغة المفتوحة من داخل النظام لأنها ترث
+   نفس القيود. هذه الصفحة تُفتح كصفحة رئيسية مستقلة (وليست داخل إطار Google)، فتعمل الكاميرا
+   المباشرة فيها طبيعياً على آيفون وأندرويد والكمبيوتر، وتتواصل مع النظام عبر واجهة برمجية
+   (?api=qr) محمية برمز دخول مؤقت يصدره النظام للمستخدم المصرَّح له بمسح الرموز.
+   تعمل هذه الصفحة بطريقتين: مدمجة (يقدّمها النظام نفسه من رابط ?page=scanner) أو مستضافة على
+   أي موقع HTTPS (يُضبط رابطها من الإعدادات)، وفي الحالتين يُمرَّر رابط النظام والرمز في الرابط.
+   ====================================================================== */
+(function () {
+  var NS = 'http://www.w3.org/1999/xhtml';
+  function el(tag, text, cls) { var e = document.createElementNS(NS, tag); if (text !== undefined && text !== null) e.textContent = String(text); if (cls) e.setAttribute('class', cls); return e; }
+  function $(id) { return document.getElementById(id); }
+
+  // ---------- الإعدادات: من الرابط (#api=...&t=...&n=...) أو من النظام نفسه في النسخة المدمجة ----------
+  var params = {};
+  (location.hash || '').replace(/^#/, '').split('&').forEach(function (kv) {
+    var i = kv.indexOf('='); if (i > 0) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) {} }
+  });
+  (location.search || '').replace(/^\?/, '').split('&').forEach(function (kv) {
+    var i = kv.indexOf('='); if (i > 0 && !params[kv.slice(0, i)]) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) {} }
+  });
+  var API = params.api || window.FLEET_API || '';
+  var TOKEN = params.t || window.FLEET_TOKEN || '';
+  var NONCE = params.n || window.FLEET_NONCE || '';
+
+  var video = $('video'), overlay = $('overlay'), statusEl = $('status'), diagEl = $('diag'), resultEl = $('result');
+  var SCANNER_VERSION = '2.15.2';
+  diagEl.textContent = 'scanner v' + SCANNER_VERSION + ' · ' + location.protocol.replace(':', '');
+  var stream = null, detector = null, zbarReady = false, handled = false, frames = 0, canvas = el('canvas');
+
+  function setStatus(msg, isErr) { statusEl.textContent = msg; statusEl.className = 'status' + (isErr ? ' err' : ''); }
+  function showOverlay(lines, onTap) {
+    while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
+    lines.forEach(function (l, i) { overlay.appendChild(el(i === 0 ? 'div' : 'small', l)); });
+    overlay.classList.remove('hidden');
+    overlay.onclick = onTap || null;
+    overlay.style.cursor = onTap ? 'pointer' : '';
+  }
+
+  $('closeBtn').onclick = function () {
+    stopCamera();
+    try { window.close(); } catch (e) {}
+    setTimeout(function () { if (!window.closed) history.back(); }, 300);
+  };
+
+  // ---------- تحميل أدوات القراءة ----------
+  function loadScript(urls) {
+    return new Promise(function (resolve) {
+      var i = 0;
+      var next = function () {
+        if (i >= urls.length) { resolve(false); return; }
+        var s = el('script'); s.setAttribute('src', urls[i++]); s.async = true;
+        s.onload = function () { resolve(true); }; s.onerror = function () { if (s.parentNode) s.parentNode.removeChild(s); next(); };
+        document.getElementsByTagName('head')[0].appendChild(s);
+      };
+      next();
+    });
+  }
+  function apiUrl(kind, extra) { return API + (API.indexOf('?') === -1 ? '?' : '&') + 'api=' + kind + (extra || ''); }
+
+  function setupDetector() {
+    if (!('BarcodeDetector' in window)) return Promise.resolve();
+    try {
+      return window.BarcodeDetector.getSupportedFormats().then(function (f) {
+        if (f && f.indexOf('qr_code') !== -1) detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      }).catch(function () {});
+    } catch (e) { return Promise.resolve(); }
+  }
+  function setupZbar() {
+    var urls = ['https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/inlined/index.js'];
+    if (window.FLEET_ZBAR_URL) urls.unshift(window.FLEET_ZBAR_URL);
+    if (API) urls.push(apiUrl('zbar'));
+    var ready = (window.zbarWasm && window.zbarWasm.scanImageData) ? Promise.resolve(true) : loadScript(urls);
+    return ready.then(function () {
+      if (!window.zbarWasm || !window.zbarWasm.scanImageData) return;
+      var tiny = canvas.getContext('2d').createImageData(8, 8);
+      return window.zbarWasm.scanImageData(tiny).then(function () { zbarReady = true; }).catch(function () {});
+    });
+  }
+  function setupJsQR() {
+    if (window.jsQR) return Promise.resolve();
+    var urls = ['https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'];
+    if (window.FLEET_JSQR_URL) urls.unshift(window.FLEET_JSQR_URL);
+    if (API) urls.push(apiUrl('jsqr'));
+    return loadScript(urls);
+  }
+  // ZBar (الأقوى مع الرموز القصيرة) + jsQR (الأقوى مع رموز الروابط الكثيفة عند الميلان) معاً
+  var decodersReady = Promise.all([setupDetector(), setupZbar(), setupJsQR()]);
+
+  // ---------- القراءة ----------
+  function region(crop, max) {
+    var w = video.videoWidth, h = video.videoHeight;
+    var sw = w * crop, sh = h * crop, sx = (w - sw) / 2, sy = (h - sh) / 2;
+    var sc = Math.min(1, max / Math.max(sw, sh));
+    var cw = Math.max(1, Math.round(sw * sc)), ch = Math.max(1, Math.round(sh * sc));
+    canvas.width = cw; canvas.height = ch;
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+    return ctx.getImageData(0, 0, cw, ch);
+  }
+  function decodeFrame() {
+    var modes = [[1, 800], [0.6, 800], [0.4, 640]];
+    var m = modes[frames % 3];
+    var tryLib = function () {
+      var id = region(m[0], m[1]);
+      var z = zbarReady ? window.zbarWasm.scanImageData(id).then(function (syms) {
+        for (var i = 0; i < (syms || []).length; i++) { var t = syms[i].decode(); if (t) return t; }
+        return null;
+      }).catch(function () { return null; }) : Promise.resolve(null);
+      return z.then(function (t) {
+        if (t) return t;
+        if (window.jsQR && (!zbarReady || frames % 2 === 1)) { var r = window.jsQR(id.data, id.width, id.height, { inversionAttempts: 'dontInvert' }); return r && r.data ? r.data : null; }
+        return null;
+      });
+    };
+    if (detector) {
+      return detector.detect(video).then(function (found) {
+        if (found && found.length && found[0].rawValue) return found[0].rawValue;
+        return tryLib();
+      }).catch(tryLib);
+    }
+    return tryLib();
+  }
+  function loop() {
+    if (handled || !stream) return;
+    if (video.readyState < 2 || !video.videoWidth) { setTimeout(loop, 150); return; }
+    frames++;
+    if (frames % 15 === 0) diagEl.textContent = 'v' + SCANNER_VERSION + ' · frames: ' + frames + ' · ' + video.videoWidth + '×' + video.videoHeight + ' · ' + (detector ? 'Native+' : '') + (zbarReady ? 'ZBar' : '') + (window.jsQR ? '+jsQR' : '') + (!zbarReady && !window.jsQR ? '—' : '');
+    decodeFrame().then(function (code) {
+      if (code && !handled) onCode(code); else setTimeout(loop, 90);
+    }).catch(function () { setTimeout(loop, 200); });
+  }
+
+  // ---------- الكاميرا ----------
+  function stopCamera() {
+    if (stream) { try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} }
+    stream = null;
+  }
+  var IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var REAL_URL = /^https?:$/i.test(location.protocol);
+  function describe(err) {
+    var n = err && err.name;
+    if (!REAL_URL && (n === 'TypeError' || n === 'NotAllowedError' || n === 'SecurityError' || n === 'InvalidAccessError'))
+      return 'متصفح ' + (IOS ? 'الآيفون' : 'هذا الجهاز') + ' لا يسمح بالكاميرا المباشرة إلا في صفحة ذات رابط https حقيقي — استخدم "📸 تصوير الرمز" أدناه، أو اطلب من مدير النظام نشر صفحة الماسح (الإعدادات ← الماسح المباشر)';
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'لم يُسمح بالوصول للكاميرا — من إعدادات المتصفح اسمح لهذا الموقع باستخدام الكاميرا ثم اضغط إعادة المحاولة';
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'لا توجد كاميرا في هذا الجهاز';
+    if (n === 'NotReadableError') return 'الكاميرا مستخدمة من تطبيق آخر — أغلقه ثم أعد المحاولة';
+    return 'تعذّر تشغيل الكاميرا' + (n ? ' (' + n + (err.message ? ': ' + err.message : '') + ')' : '');
+  }
+  function startCamera() {
+    handled = false;
+    resultEl.classList.add('hidden');
+    $('stage').classList.remove('hidden');
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showOverlay(['📷 المتصفح لا يسمح بالكاميرا في هذه الصفحة', 'افتح الصفحة في Safari أو Chrome عبر رابط https']);
+      return;
+    }
+    showOverlay(['⏳ جاري تشغيل الكاميرا...', 'إن ظهر طلب إذن الكاميرا يرجى الضغط على "سماح"']);
+    // محاولات متدرّجة: دقة عالية ← الكاميرا الخلفية فقط ← أي كاميرا (بعض الأجهزة ترفض القيود بخطأ TypeError/Overconstrained)
+    var attempts = [
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+      { video: { facingMode: 'environment' }, audio: false },
+      { video: true }
+    ];
+    var getCam = function (i) {
+      return navigator.mediaDevices.getUserMedia(attempts[i]).catch(function (err) {
+        var n = err && err.name;
+        if (i + 1 < attempts.length && (n === 'TypeError' || n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError' || n === 'NotReadableError')) return getCam(i + 1);
+        throw err;
+      });
+    };
+    getCam(0)
+      .then(function (s) {
+        stream = s;
+        try {
+          var track = s.getVideoTracks()[0], caps = track.getCapabilities ? track.getCapabilities() : null;
+          if (caps && caps.focusMode && caps.focusMode.indexOf('continuous') !== -1) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+        } catch (e) {}
+        video.muted = true;
+        video.srcObject = s;
+        var play = function () { try { var p = video.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} };
+        video.onloadedmetadata = play;
+        play();
+        overlay.classList.add('hidden');
+        setTimeout(function () {
+          if (stream && !handled && (video.readyState < 2 || !video.videoWidth)) showOverlay(['▶️', 'المس هنا لتشغيل الكاميرا'], function () { play(); overlay.classList.add('hidden'); });
+        }, 2500);
+        setStatus('⏳ جاري تجهيز أداة القراءة...');
+        decodersReady.then(function () {
+          if (!detector && !zbarReady && !window.jsQR) { setStatus('❌ تعذّر تحميل أداة قراءة الرموز — تحقق من الاتصال بالإنترنت', true); return; }
+          setStatus('🔎 جاري المسح — وجّه الكاميرا نحو رمز QR وسيتم التعرّف عليه تلقائياً');
+          loop();
+        });
+      })
+      .catch(function (err) {
+        if (stream) { setStatus('⚠️ ' + ((err && err.message) || err), true); return; }
+        var blockedHere = !REAL_URL;
+        showOverlay(blockedHere ? ['📸', 'المس هنا لتصوير الرمز بالكاميرا'] : ['📷 ' + describe(err), 'المس هنا لإعادة المحاولة'],
+          blockedHere ? function () { photoInput.value = ''; photoInput.click(); } : function () { startCamera(); });
+        setStatus(describe(err), true);
+        $('photoBtn').className = 'btn btn-primary';
+      });
+  }
+
+  // ---------- بعد التعرّف على الرمز ----------
+  function onCode(code) {
+    handled = true;
+    stopCamera();
+    try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
+    setStatus('✅ تم قراءة الرمز — جاري البحث عن السيارة...');
+    // إن فُتحت الصفحة من النظام: تُرسَل النتيجة إليه وتُغلق الصفحة تلقائياً بعد تأكيد الاستلام
+    // (فتظهر تفاصيل السيارة داخل النظام مباشرة)، وإلا تُعرض التفاصيل هنا
+    var acked = false;
+    var onAck = function (ev) { if (ev && ev.data && ev.data.type === 'fleet-qr-ack' && ev.data.nonce === NONCE) acked = true; };
+    window.addEventListener('message', onAck);
+    try { if (window.opener && NONCE) window.opener.postMessage({ type: 'fleet-qr', code: code, nonce: NONCE }, '*'); } catch (e) {}
+    setTimeout(function () {
+      window.removeEventListener('message', onAck);
+      if (acked) { try { window.close(); } catch (e) {} setTimeout(function () { if (!window.closed) lookup(code); }, 400); }
+      else lookup(code);
+    }, (window.opener && NONCE) ? 1200 : 0);
+  }
+
+  function callApi(code) {
+    var url = apiUrl('qr', '&code=' + encodeURIComponent(code) + '&t=' + encodeURIComponent(TOKEN));
+    var viaJsonp = function () {
+      return new Promise(function (resolve, reject) {
+        var cb = '__fleetQr' + Date.now();
+        window[cb] = function (data) { resolve(data); try { delete window[cb]; } catch (e) {} };
+        var s = el('script'); s.setAttribute('src', url + '&callback=' + cb);
+        s.onerror = function () { reject(new Error('تعذّر الاتصال بالنظام')); };
+        document.getElementsByTagName('head')[0].appendChild(s);
+        setTimeout(function () { reject(new Error('انتهت مهلة الاتصال بالنظام')); }, 20000);
+      });
+    };
+    if (!window.fetch) return viaJsonp();
+    return fetch(url, { method: 'GET', credentials: 'omit', redirect: 'follow' })
+      .then(function (r) { return r.json(); })
+      .catch(function () { return viaJsonp(); });
+  }
+
+  function lookup(code) {
+    if (!API) { setStatus('✅ الرمز: ' + code + ' — افتح الماسح من داخل النظام لعرض تفاصيل السيارة', false); showAgain(); return; }
+    callApi(code).then(function (res) {
+      if (!res || !res.success) { setStatus('❌ ' + ((res && res.message) || 'لم يتم العثور على السيارة'), true); showAgain(code); return; }
+      renderVehicle(res.vehicle);
+    }).catch(function (e) { setStatus('❌ ' + e.message, true); showAgain(code); });
+  }
+
+  function showAgain(code) {
+    while (resultEl.firstChild) resultEl.removeChild(resultEl.firstChild);
+    if (code) resultEl.appendChild(el('div', 'الرمز المقروء: ' + code, 'sub'));
+    var a = el('div', null, 'actions');
+    var again = el('button', '📷 مسح رمز آخر', 'btn btn-primary'); again.setAttribute('type', 'button'); again.onclick = startCamera;
+    a.appendChild(again); resultEl.appendChild(a);
+    resultEl.classList.remove('hidden');
+  }
+
+  function renderVehicle(v) {
+    $('stage').classList.add('hidden');
+    setStatus('✅ تم العثور على السيارة');
+    while (resultEl.firstChild) resultEl.removeChild(resultEl.firstChild);
+    resultEl.appendChild(el('div', v.PlateNo, 'plate'));
+    resultEl.appendChild(el('div', (v.Brand || '') + ' ' + (v.Model || '') + (v.Year ? ' · ' + v.Year : '') + ' — ' + (v.Status || ''), 'sub'));
+    var g = el('div', null, 'grid');
+    var tile = function (label, value, wide) { var t = el('div', null, 'tile' + (wide ? ' wide' : '')); t.appendChild(el('small', label)); t.appendChild(el('b', value)); g.appendChild(t); };
+    tile('🔢 آخر قراءة للعداد', (Number(v.lastOdometer) || 0).toLocaleString('ar-EG') + ' كم');
+    tile('🚘 رقم السيارة', v.PlateNo);
+    tile('🎨 اللون', v.colorName || '-');
+    tile('📅 عدد الحجوزات', Number(v.bookingsCount) || 0);
+    tile('🔧 عدد مرات الصيانة', Number(v.maintenanceCount) || 0);
+    tile('💚 مستوى الجودة', (v.healthLabel || '-') + ' (' + (Number(v.healthScore) || 0) + '%)');
+    tile('🕒 تاريخ آخر حجز', v.lastBookingDate ? (v.lastBookingDate + (v.lastBookingBy ? ' · ' + v.lastBookingBy : '')) : 'لم تُحجز بعد', true);
+    resultEl.appendChild(g);
+    var a = el('div', null, 'actions');
+    var again = el('button', '📷 مسح رمز آخر', 'btn btn-primary'); again.setAttribute('type', 'button'); again.onclick = startCamera;
+    var back = el('button', 'العودة للنظام', 'btn btn-light'); back.setAttribute('type', 'button'); back.onclick = function () { $('closeBtn').onclick(); };
+    a.appendChild(again); a.appendChild(back); resultEl.appendChild(a);
+    resultEl.classList.remove('hidden');
+  }
+
+  // ---------- تصوير الرمز (احتياطي إن لم تعمل الكاميرا المباشرة على جهاز ما) ----------
+  var photoInput = el('input');
+  photoInput.setAttribute('type', 'file');
+  photoInput.setAttribute('accept', 'image/*');
+  photoInput.setAttribute('capture', 'environment');
+  photoInput.setAttribute('style', 'position:fixed;left:-2000px;top:0;width:1px;height:1px;opacity:0');
+  document.body.appendChild(photoInput);
+  $('photoBtn').onclick = function () { photoInput.value = ''; photoInput.click(); };
+  function decodeImageData(id) {
+    var z = zbarReady ? window.zbarWasm.scanImageData(id).then(function (syms) {
+      for (var i = 0; i < (syms || []).length; i++) { var t = syms[i].decode(); if (t) return t; }
+      return null;
+    }).catch(function () { return null; }) : Promise.resolve(null);
+    return z.then(function (t) {
+      if (t) return t;
+      if (window.jsQR) { var r = window.jsQR(id.data, id.width, id.height, { inversionAttempts: 'attemptBoth' }); return r && r.data ? r.data : null; }
+      return null;
+    });
+  }
+  photoInput.onchange = function () {
+    var f = photoInput.files && photoInput.files[0];
+    if (!f) return;
+    setStatus('⏳ جاري قراءة الصورة...');
+    var url = URL.createObjectURL(f), img = new Image();
+    img.onload = function () {
+      // مقاسات ومقاطع متعددة (نفس أسلوب قراءة الصور داخل النظام): الصورة كاملة بعدة أحجام ثم الوسط مكبَّراً
+      var attempts = [[1, 1000], [1, 700], [1, 1500], [0.6, 1000], [1, 500], [0.4, 900], [1, 2000], [0.6, 700], [1, 400]], i = 0;
+      var W = img.naturalWidth, Hh = img.naturalHeight;
+      var tryNext = function () {
+        if (i >= attempts.length) { URL.revokeObjectURL(url); setStatus('❌ لم يتم التعرّف على رمز QR في الصورة — قرّب الكاميرا من الرمز وأعد التصوير', true); return; }
+        var a = attempts[i++], sw = W * a[0], sh = Hh * a[0], sc = Math.min(1, a[1] / Math.max(sw, sh));
+        var c = el('canvas'); c.width = Math.max(1, Math.round(sw * sc)); c.height = Math.max(1, Math.round(sh * sc));
+        var ctx = c.getContext('2d'); ctx.drawImage(img, (W - sw) / 2, (Hh - sh) / 2, sw, sh, 0, 0, c.width, c.height);
+        decodeImageData(ctx.getImageData(0, 0, c.width, c.height)).then(function (t) {
+          if (t) { URL.revokeObjectURL(url); onCode(t); } else setTimeout(tryNext, 20);
+        });
+      };
+      decodersReady.then(function () { if (!zbarReady && !window.jsQR) return setupJsQR(); }).then(tryNext);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); setStatus('❌ تعذّرت قراءة الصورة', true); };
+    img.src = url;
+  };
+
+  $('manualBtn').onclick = function () { var v = ($('manualInput').value || '').trim(); if (v) onCode(v); };
+  $('manualInput').onkeydown = function (e) { if (e.key === 'Enter') $('manualBtn').onclick(); };
+  window.addEventListener('pagehide', stopCamera);
+
+  if (!TOKEN && API) setStatus('⚠️ افتح الماسح من زر 📷 داخل النظام حتى تظهر تفاصيل السيارة', true);
+  startCamera();
+})();
+//]]>
+</script>
+</body>
+</html>
